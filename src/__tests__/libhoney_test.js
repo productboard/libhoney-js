@@ -2,9 +2,6 @@
 import { MockTransmission } from "../transmission";
 import libhoney from "../libhoney";
 
-let superagent = require("superagent");
-let mock = require("superagent-mocker")(superagent);
-
 describe("libhoney", () => {
   describe("constructor options", () => {
     describe.each(["mock", MockTransmission])(
@@ -114,9 +111,21 @@ describe("libhoney", () => {
   });
 
   describe("response queue", () => {
+    let originalFetch;
+
+    beforeEach(() => {
+      originalFetch = global.fetch;
+      global.fetch = jest.fn();
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
     it("should enqueue a maximum of maxResponseQueueSize, dropping new responses (not old)", (done) => {
-      mock.post("http://localhost:9999/1/events/testResponseQueue", (_req) => {
-        return {};
+      global.fetch.mockImplementation((_url, options) => {
+        const reqEvents = JSON.parse(options.body);
+        return Promise.resolve({ ok: true, json: async () => reqEvents.map(() => ({ status: 202 })) });
       });
 
       let queueSize = 50;
@@ -140,6 +149,8 @@ describe("libhoney", () => {
           queue.sort((a, b) => a.metadata - b.metadata);
           expect(queue[0].metadata).toEqual(0);
           expect(queue[queueSize - 1].metadata).toEqual(queueSize - 1);
+          expect(global.fetch).toHaveBeenCalled();
+          expect(global.fetch).toHaveBeenCalledWith("http://localhost:9999/1/batch/testResponseQueue", expect.any(Object));
           done();
         }
       });

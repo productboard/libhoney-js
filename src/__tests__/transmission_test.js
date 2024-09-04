@@ -5,20 +5,22 @@ import { Transmission, ValidatedEvent } from "../transmission";
 
 import http from "http";
 import net from "net";
-import superagent from "superagent";
-import superagentMocker from "superagent-mocker";
-
-let mock;
 
 describe("base transmission", () => {
-  beforeEach(() => (mock = superagentMocker(superagent)));
+  let originalFetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    global.fetch = jest.fn();
+  });
+
   afterEach(() => {
-    mock.clearRoutes();
-    mock.unmock(superagent);
+    global.fetch = originalFetch;
   });
 
   // This checks that the code connects to a proxy
-  it("will hit a proxy", done => {
+  // NOTE: this fork doesn't support `proxy` option as we don't need it
+  it.skip("will hit a proxy", done => {
     let server = net.createServer(socket => {
       // if we get here, we got data, so the test passes -- otherwise,
       // the test will never end and will timeout, which is a failure.
@@ -31,7 +33,8 @@ describe("base transmission", () => {
     server.listen(9998, "127.0.0.1");
 
     let transmission = new Transmission({
-      proxy: "http://127.0.0.1:9998",
+      // NOTE: proxy not supported
+      // proxy: "http://127.0.0.1:9998",
       batchTimeTrigger: 10000, // larger than the mocha timeout
       batchSizeTrigger: 0
     });
@@ -48,19 +51,15 @@ describe("base transmission", () => {
     );
   });
 
-  it("should handle batchSizeTrigger of 0", done => {
-    mock.post("http://localhost:9999/1/events/test-transmission", req => {
-      let reqEvents = JSON.parse(req.body);
-      let resp = reqEvents.map(() => ({ status: 202 }));
-      return { text: JSON.stringify(resp) };
+  it("should handle batchSizeTrigger of 0", async () => {
+    global.fetch.mockImplementation((_url, options) => {
+      const reqEvents = JSON.parse(options.body);
+      return Promise.resolve({ ok: true, json: async () => reqEvents.map(() => ({ status: 202 })) });
     });
 
-    let transmission = new Transmission({
+    const transmission = new Transmission({
       batchTimeTrigger: 10000, // larger than the mocha timeout
       batchSizeTrigger: 0,
-      responseCallback() {
-        done();
-      }
     });
 
     transmission.sendEvent(
@@ -73,16 +72,19 @@ describe("base transmission", () => {
         postData: { a: 1, b: 2 }
       })
     );
+
+    await transmission.flush();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith("http://localhost:9999/1/batch/test-transmission", expect.any(Object));
   });
 
-  it("should send a batch when batchSizeTrigger is met, not exceeded", done => {
+  it("should send a batch when batchSizeTrigger is met, not exceeded", async () => {
     let responseCount = 0;
     let batchSize = 5;
 
-    mock.post("http://localhost:9999/1/batch/test-transmission", req => {
-      let reqEvents = JSON.parse(req.body);
-      let resp = reqEvents.map(() => ({ status: 202 }));
-      return { text: JSON.stringify(resp) };
+    global.fetch.mockImplementation((_url, options) => {
+      const reqEvents = JSON.parse(options.body);
+      return Promise.resolve({ ok: true, json: async () => reqEvents.map(() => ({ status: 202 })) });
     });
 
     let transmission = new Transmission({
@@ -91,12 +93,6 @@ describe("base transmission", () => {
       responseCallback(queue) {
         responseCount += queue.length;
         queue.splice(0, queue.length);
-        return responseCount === batchSize
-          ? done()
-          : done(
-            "The events dispatched over transmission does not align with batch size when the same number of " +
-            `events were enqueued as the batchSizeTrigger. Expected ${batchSize}, got ${responseCount}.`
-          );
       }
     });
 
@@ -112,23 +108,21 @@ describe("base transmission", () => {
         })
       );
     }
+
+    await transmission.flush();
+    expect(responseCount).toEqual(batchSize);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith("http://localhost:9999/1/batch/test-transmission", expect.any(Object));
   });
 
-  it("should handle apiHosts with trailing slashes", done => {
-    let endpointHit = false;
-    mock.post("http://localhost:9999/1/batch/test-transmission", req => {
-      endpointHit = true;
-      let reqEvents = JSON.parse(req.body);
-      let resp = reqEvents.map(() => ({ status: 202 }));
-      return { text: JSON.stringify(resp) };
+  it("should handle apiHosts with trailing slashes", async () => {
+    global.fetch.mockImplementation((_url, options) => {
+      const reqEvents = JSON.parse(options.body);
+      return Promise.resolve({ ok: true, json: async () => reqEvents.map(() => ({ status: 202 })) });
     });
 
     let transmission = new Transmission({
       batchTimeTrigger: 0,
-      responseCallback: function (_resp) {
-        expect(endpointHit).toBe(true);
-        done();
-      }
     });
 
     transmission.sendEvent(
@@ -141,14 +135,20 @@ describe("base transmission", () => {
         postData: { a: 1, b: 2 }
       })
     );
+
+    await transmission.flush();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith("http://localhost:9999/1/batch/test-transmission", expect.any(Object));
   });
 
-  it("should eventually send a single event (after the timeout)", done => {
+  it("should eventually send a single event (after the timeout)", async () => {
+    global.fetch.mockImplementation((_url, options) => {
+      const reqEvents = JSON.parse(options.body);
+      return Promise.resolve({ ok: true, json: async () => reqEvents.map(() => ({ status: 202 })) });
+    });
+
     let transmission = new Transmission({
       batchTimeTrigger: 10,
-      responseCallback: function (_resp) {
-        done();
-      }
     });
 
     transmission.sendEvent(
@@ -161,14 +161,20 @@ describe("base transmission", () => {
         postData: { a: 1, b: 2 }
       })
     );
+
+    await transmission.flush();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith("http://localhost:9999/1/batch/test-transmission", expect.any(Object));
   });
 
-  it("should respect sample rate and accept the event", done => {
+  it("should respect sample rate and accept the event", async () => {
+    global.fetch.mockImplementation((_url, options) => {
+      const reqEvents = JSON.parse(options.body);
+      return Promise.resolve({ ok: true, json: async () => reqEvents.map(() => ({ status: 202 })) });
+    });
+
     let transmission = new Transmission({
       batchTimeTrigger: 10,
-      responseCallback: function (_resp) {
-        done();
-      }
     });
 
     transmission._randomFn = function () {
@@ -184,17 +190,19 @@ describe("base transmission", () => {
         postData: { a: 1, b: 2 }
       })
     );
+
+    await transmission.flush();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith("http://localhost:9999/1/batch/test-transmission", expect.any(Object));
   });
 
-  it("should respect sample rate and drop the event", done => {
+  it("should respect sample rate and drop the event", async () => {
     let transmission = new Transmission({ batchTimeTrigger: 10 });
 
     transmission._randomFn = function () {
       return 0.11;
     };
-    transmission._droppedCallback = function () {
-      done();
-    };
+    transmission._droppedCallback = jest.fn();
 
     transmission.sendEvent(
       new ValidatedEvent({
@@ -206,18 +214,21 @@ describe("base transmission", () => {
         postData: { a: 1, b: 2 }
       })
     );
+
+    await transmission.flush();
+    expect(transmission._droppedCallback).toHaveBeenCalledTimes(1);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it("should drop events beyond the pendingWorkCapacity", done => {
+  it("should drop events beyond the pendingWorkCapacity", async () => {
     let eventDropped;
     let droppedExpected = 5;
     let responseCount = 0;
     let responseExpected = 5;
 
-    mock.post("http://localhost:9999/1/batch/test-transmission", req => {
-      let reqEvents = JSON.parse(req.body);
-      let resp = reqEvents.map(() => ({ status: 202 }));
-      return { text: JSON.stringify(resp) };
+    global.fetch.mockImplementation((_url, options) => {
+      const reqEvents = JSON.parse(options.body);
+      return Promise.resolve({ ok: true, json: async () => reqEvents.map(() => ({ status: 202 })) });
     });
 
     let transmission = new Transmission({
@@ -226,9 +237,6 @@ describe("base transmission", () => {
       responseCallback(queue) {
         responseCount += queue.length;
         queue.splice(0, queue.length);
-        if (responseCount === responseExpected) {
-          done();
-        }
       }
     });
 
@@ -266,16 +274,20 @@ describe("base transmission", () => {
       );
       expect(eventDropped).toBe(true);
     }
+
+    await transmission.flush();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith("http://localhost:9999/1/batch/test-transmission", expect.any(Object));
+    expect(responseCount).toEqual(responseExpected);
   });
 
-  it("should send the right number events even if it requires multiple concurrent batches", done => {
+  it("should send the right number events even if it requires multiple concurrent batches", async () => {
     let responseCount = 0;
     let responseExpected = 10;
 
-    mock.post("http://localhost:9999/1/batch/test-transmission", req => {
-      let reqEvents = JSON.parse(req.body);
-      let resp = reqEvents.map(() => ({ status: 202 }));
-      return { text: JSON.stringify(resp) };
+    global.fetch.mockImplementation((_url, options) => {
+      const reqEvents = JSON.parse(options.body);
+      return Promise.resolve({ ok: true, json: async () => reqEvents.map(() => ({ status: 202 })) });
     });
 
     let transmission = new Transmission({
@@ -285,9 +297,6 @@ describe("base transmission", () => {
       responseCallback(queue) {
         responseCount += queue.length;
         queue.splice(0, queue.length);
-        if (responseCount === responseExpected) {
-          done();
-        }
       }
     });
 
@@ -303,14 +312,20 @@ describe("base transmission", () => {
         })
       );
     }
+
+    await transmission.flush();
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch).toHaveBeenNthCalledWith(1, "http://localhost:9999/1/batch/test-transmission", expect.any(Object));
+    expect(global.fetch).toHaveBeenNthCalledWith(2, "http://localhost:9999/1/batch/test-transmission", expect.any(Object));
+    expect(responseCount).toEqual(responseExpected);
   });
 
-  it("should send the right number of events even if they all fail", done => {
+  it("should send the right number of events even if they all fail", async () => {
     let responseCount = 0;
     let responseExpected = 10;
 
-    mock.post("http://localhost:9999/1/batch/test-transmission", _req => {
-      return { status: 404 };
+    global.fetch.mockImplementation(() => {
+      return Promise.resolve({ ok: false, status: 404 });
     });
 
     let transmission = new Transmission({
@@ -324,9 +339,6 @@ describe("base transmission", () => {
           expect(error.status).toEqual(404);
           expect(statusCode).toEqual(404);
           responseCount++;
-          if (responseCount === responseExpected) {
-            done();
-          }
         });
       }
     });
@@ -343,16 +355,21 @@ describe("base transmission", () => {
         })
       );
     }
+
+    await transmission.flush();
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch).toHaveBeenNthCalledWith(1, "http://localhost:9999/1/batch/test-transmission", expect.any(Object));
+    expect(global.fetch).toHaveBeenNthCalledWith(2, "http://localhost:9999/1/batch/test-transmission", expect.any(Object));
+    expect(responseCount).toEqual(responseExpected);
   });
 
-  it("should send the right number of events even it requires more batches than maxConcurrentBatch", done => {
+  it("should send the right number of events even it requires more batches than maxConcurrentBatch", async () => {
     let responseCount = 0;
     let responseExpected = 50;
     let batchSize = 2;
-    mock.post("http://localhost:9999/1/batch/test-transmission", req => {
-      let reqEvents = JSON.parse(req.body);
-      let resp = reqEvents.map(() => ({ status: 202 }));
-      return { text: JSON.stringify(resp) };
+    global.fetch.mockImplementation((_url, options) => {
+      const reqEvents = JSON.parse(options.body);
+      return Promise.resolve({ ok: true, json: async () => reqEvents.map(() => ({ status: 202 })) });
     });
 
     let transmission = new Transmission({
@@ -362,9 +379,6 @@ describe("base transmission", () => {
       responseCallback(queue) {
         responseCount += queue.length;
         queue.splice(0, queue.length);
-        if (responseCount === responseExpected) {
-          done();
-        }
       }
     });
 
@@ -380,15 +394,19 @@ describe("base transmission", () => {
         })
       );
     }
+
+    await transmission.flush();
+    expect(global.fetch).toHaveBeenCalledTimes(25);
+    expect(global.fetch).toHaveBeenCalledWith("http://localhost:9999/1/batch/test-transmission", expect.any(Object));
+    expect(responseCount).toEqual(responseExpected);
   });
 
-  it("should send 100% of presampled events", done => {
+  it("should send 100% of presampled events", async () => {
     let responseCount = 0;
     let responseExpected = 10;
-    mock.post("http://localhost:9999/1/batch/test-transmission", req => {
-      let reqEvents = JSON.parse(req.body);
-      let resp = reqEvents.map(() => ({ status: 202 }));
-      return { text: JSON.stringify(resp) };
+    global.fetch.mockImplementation((_url, options) => {
+      const reqEvents = JSON.parse(options.body);
+      return Promise.resolve({ ok: true, json: async () => reqEvents.map(() => ({ status: 202 })) });
     });
 
     let transmission = new Transmission({
@@ -400,9 +418,6 @@ describe("base transmission", () => {
             return;
           }
           responseCount++;
-          if (responseCount === responseExpected) {
-            done();
-          }
         });
       }
     });
@@ -419,27 +434,24 @@ describe("base transmission", () => {
         })
       );
     }
+
+    await transmission.flush();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith("http://localhost:9999/1/batch/test-transmission", expect.any(Object));
+    expect(responseCount).toEqual(responseExpected);
   });
 
-  it("should deal with encoding errors", done => {
+  it("should deal with encoding errors", async () => {
     let responseCount = 0;
     let responseExpected = 11;
-    mock.post("http://localhost:9999/1/batch/test-transmission", req => {
-      let reqEvents = JSON.parse(req.body);
-      let resp = reqEvents.map(() => ({ status: 202 }));
-      return { text: JSON.stringify(resp) };
+    global.fetch.mockImplementation((_url, options) => {
+      const reqEvents = JSON.parse(options.body);
+      return Promise.resolve({ ok: true, json: async () => reqEvents.map(() => ({ status: 202 })) });
     });
 
     let transmission = new Transmission({
       responseCallback(queue) {
         responseCount = queue.length;
-        return responseCount === responseExpected
-          ? done()
-          : done(
-            Error(
-              "Incorrect queue length. Queue should equal length of all valid and invalid events enqueued."
-            )
-          );
       }
     });
 
@@ -482,16 +494,20 @@ describe("base transmission", () => {
         })
       );
     }
+
+    await transmission.flush();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith("http://localhost:9999/1/batch/test-transmission", expect.any(Object));
+    expect(responseCount).toEqual(responseExpected);
   });
 
   it("should block on flush", async () => {
     let responseCount = 0;
     let responseExpected = 50;
     let batchSize = 2;
-    mock.post("http://localhost:9999/1/batch/test-transmission", req => {
-      let reqEvents = JSON.parse(req.body);
-      let resp = reqEvents.map(() => ({ status: 202 }));
-      return { text: JSON.stringify(resp) };
+    global.fetch.mockImplementation((_url, options) => {
+      const reqEvents = JSON.parse(options.body);
+      return Promise.resolve({ ok: true, json: async () => reqEvents.map(() => ({ status: 202 })) });
     });
 
     let transmission = new Transmission({
@@ -518,13 +534,12 @@ describe("base transmission", () => {
     }
 
     await transmission.flush();
+    expect(global.fetch).toHaveBeenCalledTimes(25);
+    expect(global.fetch).toHaveBeenCalledWith("http://localhost:9999/1/batch/test-transmission", expect.any(Object));
     expect(responseCount).toBe(responseExpected);
   });
 
-  it("should allow user-agent additions", done => {
-    let responseCount = 0;
-    let responseExpected = 2;
-
+  it("should allow user-agent additions", async () => {
     let userAgents = [
       {
         dataset: "test-transmission1",
@@ -542,27 +557,23 @@ describe("base transmission", () => {
       }
     ];
 
-    // set up our endpoints
-    userAgents.forEach(userAgent =>
-      mock.post(`http://localhost:9999/1/batch/${userAgent.dataset}`, req => {
-        if (!userAgent.probe(req.headers["user-agent"])) {
-          done(new Error("unexpected user-agent addition"));
-        }
-        return {};
-      })
-    );
+    let responseCount = 0;
+    let responseExpected = 2;
 
-    // now send our events through separate transmissions with different user
-    // agent additions.
-    userAgents.forEach(userAgent => {
+    for (const userAgent of userAgents) {
+      global.fetch.mockClear();
+      global.fetch.mockImplementation((_url, options) => {
+        expect(userAgent.probe(options.headers["user-agent"])).toBeTruthy();
+        return Promise.resolve({});
+      });
+
+      // send our events through separate transmissions with different user
+      // agent additions.
       let transmission = new Transmission({
         batchSizeTrigger: 1, // so we'll send individual events
         responseCallback(queue) {
           let responses = queue.splice(0, queue.length);
           responseCount += responses.length;
-          if (responseCount === responseExpected) {
-            done();
-          }
         },
         userAgentAddition: userAgent.addition
       });
@@ -577,10 +588,16 @@ describe("base transmission", () => {
           postData: { a: 1, b: 2 }
         })
       );
-    });
+
+      await transmission.flush();
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(global.fetch).toHaveBeenCalledWith(`http://localhost:9999/1/batch/${userAgent.dataset}`, expect.any(Object));
+    }
+
+    expect(responseCount).toEqual(responseExpected);
   });
 
-  it("should use X-Honeycomb-UserAgent in browser", done => {
+  it("should use X-Honeycomb-UserAgent in browser", async () => {
     // terrible hack to get our "are we running in node" check to return false
     process.env.LIBHONEY_TARGET = "browser";
 
@@ -589,20 +606,10 @@ describe("base transmission", () => {
       batchSizeTrigger: 0
     });
 
-    mock.post("http://localhost:9999/1/batch/browser-test", req => {
-      if (req.headers["user-agent"]) {
-        done(new Error("unexpected user-agent addition"));
-      }
-
-      if (!req.headers["x-honeycomb-useragent"]) {
-        done(new Error("missing X-Honeycomb-UserAgent header"));
-      }
-
-      done();
-
-      process.env.LIBHONEY_TARGET = "";
-
-      return {};
+    global.fetch.mockImplementation((_url, options) => {
+      expect(options.headers["user-agent"]).toBeUndefined();
+      expect(options.headers["x-honeycomb-useragent"]).toBeDefined();
+      return Promise.resolve({});
     });
 
     transmission.sendPresampledEvent(
@@ -615,17 +622,21 @@ describe("base transmission", () => {
         postData: { a: 1, b: 2 }
       })
     );
+
+    await transmission.flush();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith("http://localhost:9999/1/batch/browser-test", expect.any(Object));
+    process.env.LIBHONEY_TARGET = "";
   });
+});
 
+describe("special-case transmission", () => {
   it("should respect options.timeout and fail sending the batch", done => {
-    // we can't use superagent-mocker here, since we want the request to timeout,
-    // and there's no async flow in -mocker :(
-
     // This number needs to be less than the global test timeout of 5000 so that the server closes in time
     // before jest starts complaining.
     const serverTimeout = 2500; // milliseconds
 
-    const server = http.createServer((req, res) => {
+    const server = http.createServer((_req, res) => {
       setTimeout(
         () => {
           // this part doesn't really matter

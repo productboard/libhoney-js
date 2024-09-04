@@ -4,12 +4,6 @@
 
 /* global global, process */
 
-/**
- * @module
- */
-import superagent from "superagent";
-import urljoin from "urljoin";
-
 const USER_AGENT = "libhoney-js/<@LIBHONEY_JS_VERSION@>";
 
 const _global =
@@ -237,7 +231,6 @@ export class Transmission {
     }
 
     this._userAgentAddition = options.userAgentAddition || "";
-    this._proxy = options.proxy;
 
     // Included for testing; to stub out randomness and verify that an event
     // was dropped.
@@ -290,7 +283,7 @@ export class Transmission {
     });
   }
 
-  _sendBatch() {
+  async _sendBatch() {
     if (this._batchCount === maxConcurrentBatches) {
       // don't start up another concurrent batch.  the next timeout/sendEvent or batch completion
       // will cause us to send another
@@ -323,103 +316,102 @@ export class Transmission {
       }
     };
 
-    let batches = Object.keys(batchAgg.batches).map(k => batchAgg.batches[k]);
-    eachPromise(batches, batch => {
-      let url = urljoin(batch.apiHost, "/1/batch", batch.dataset);
-      let postReq = superagent.post(url);
+    const fetchWithTimeout = (url, { signal, ...options }, ms) => {
+      const controller = new AbortController();
+      const promise = fetch(url, { signal: controller.signal, ...options });
+      if (signal) signal.addEventListener("abort", () => controller.abort());
+      const timeout = setTimeout(() => controller.abort(), ms);
+      return promise.finally(() => clearTimeout(timeout));
+    };
 
-      let reqPromise;
-      if (process.env.LIBHONEY_TARGET === "browser") {
-        reqPromise = Promise.resolve({ req: postReq });
-      } else {
-        reqPromise = Promise.resolve(
-          this._proxy
-            ? import("superagent-proxy").then(({ default: proxy }) => ({
-                req: proxy(postReq, this._proxy)
-              }))
-            : { req: postReq }
-        );
-      }
-      let { encoded, numEncoded } = batchAgg.encodeBatchEvents(batch.events);
-      return reqPromise.then(
-        ({ req }) =>
-          new Promise(resolve => {
-            // if we failed to encode any of the events, no point in sending anything to honeycomb
-            if (numEncoded === 0) {
-              this._responseCallback(
-                batch.events.map(ev => ({
+    let batches = Object.keys(batchAgg.batches).map(k => batchAgg.batches[k]);
+    try {
+      await eachPromise(batches, async (batch) => {
+        let url = new URL(`/1/batch/${batch.dataset}`, batch.apiHost).href;
+        let { encoded, numEncoded } = batchAgg.encodeBatchEvents(batch.events);
+
+        if (numEncoded === 0) {
+          this._responseCallback(
+            batch.events.map(ev => ({
+              metadata: ev.metadata,
+              error: ev.encodeError
+            }))
+          );
+          return;
+        }
+
+        let userAgent = USER_AGENT;
+        let trimmedAddition = this._userAgentAddition.trim();
+        if (trimmedAddition) {
+          userAgent = `${USER_AGENT} ${trimmedAddition}`;
+        }
+
+        let start = Date.now();
+        try {
+          const response = await fetchWithTimeout(url, {
+            method: "POST",
+            headers: {
+              "X-Honeycomb-Team": batch.writeKey,
+              [process.env.LIBHONEY_TARGET === "browser" ? "X-Honeycomb-UserAgent" : "User-Agent"]: userAgent,
+              "Content-Type": "application/json"
+            },
+            body: encoded
+          }, this._timeout);
+
+          let end = Date.now();
+
+          if (!response.ok) {
+            const error = new Error(`HTTP error! status: ${response.status}`);
+
+            error.status = response.status;
+
+            throw error;
+          }
+
+          let responseData = await response.json();
+          let respIdx = 0;
+          this._responseCallback(
+            batch.events.map(ev => {
+              if (ev.encodeError) {
+                return {
+                  duration: end - start,
                   metadata: ev.metadata,
                   error: ev.encodeError
-                }))
-              );
-              resolve();
-              return;
-            }
+                };
+              } else {
+                let nextResponse = responseData[respIdx++];
+                return {
+                  // eslint-disable-next-line camelcase
+                  status_code: nextResponse.status,
+                  duration: end - start,
+                  metadata: ev.metadata,
+                  error: nextResponse.err
+                };
+              }
+            })
+          );
+        } catch (error) {
+          if (error.name === "AbortError") {
+            error.timeout = true;
+          }
 
-            let userAgent = USER_AGENT;
-            let trimmedAddition = this._userAgentAddition.trim();
-            if (trimmedAddition) {
-              userAgent = `${USER_AGENT} ${trimmedAddition}`;
-            }
-
-            let start = Date.now();
-            req
-              .set("X-Honeycomb-Team", batch.writeKey)
-              .set(
-                process.env.LIBHONEY_TARGET === "browser"
-                  ? "X-Honeycomb-UserAgent"
-                  : "User-Agent",
-                userAgent
-              )
-              .type("json")
-              .timeout(this._timeout)
-              .send(encoded)
-              .end((err, res) => {
-                let end = Date.now();
-
-                if (err) {
-                  this._responseCallback(
-                    batch.events.map(ev => ({
-                      // eslint-disable-next-line camelcase
-                      status_code: ev.encodeError ? undefined : err.status,
-                      duration: end - start,
-                      metadata: ev.metadata,
-                      error: ev.encodeError || err
-                    }))
-                  );
-                } else {
-                  let response = JSON.parse(res.text);
-                  let respIdx = 0;
-                  this._responseCallback(
-                    batch.events.map(ev => {
-                      if (ev.encodeError) {
-                        return {
-                          duration: end - start,
-                          metadata: ev.metadata,
-                          error: ev.encodeError
-                        };
-                      } else {
-                        let nextResponse = response[respIdx++];
-                        return {
-                          // eslint-disable-next-line camelcase
-                          status_code: nextResponse.status,
-                          duration: end - start,
-                          metadata: ev.metadata,
-                          error: nextResponse.err
-                        };
-                      }
-                    })
-                  );
-                }
-                // we resolve unconditionally to continue the iteration in eachSeries.  errors will cause
-                // the event to be re-enqueued/dropped.
-                resolve();
-              });
-          })
-      );
-    })
-      .then(finishBatch)
-      .catch(finishBatch);
+          let end = Date.now();
+          this._responseCallback(
+            batch.events.map(ev => ({
+              // eslint-disable-next-line camelcase
+              status_code: ev.encodeError ? undefined : (error.status || undefined),
+              duration: end - start,
+              metadata: ev.metadata,
+              error: ev.encodeError || error
+            }))
+          );
+        }
+      });
+    } catch (error) {
+      console.error("Error in batch processing:", error);
+    } finally {
+      finishBatch();
+    }
   }
 
   _shouldSendEvent(ev) {

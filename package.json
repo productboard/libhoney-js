@@ -1,12 +1,7 @@
 {
   "name": "libhoney",
-  "version": "3.1.1",
-  "description": " Honeycomb.io Javascript library",
-  "bugs": "https://github.com/honeycombio/libhoney-js/issues",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/honeycombio/libhoney-js.git"
-  },
+  "version": "3.1.1-pb-patch-1",
+  "description": "Honeycomb.io Javascript library (Patched by ProductBoard)",
   "engines": {
     "node": ">= 10.*"
   },
@@ -18,47 +13,5 @@
     "README.md",
     "LICENSE"
   ],
-  "scripts": {
-    "build": "npm run build:node && npm run build:browser",
-    "build:node": "rollup -c rollup.config.js",
-    "build:browser": "rollup -c rollup.browser.config.js",
-    "dev": "rollup -c -w",
-    "test": "jest",
-    "test-coverage": "jest --coverage",
-    "format": "prettier --write \"src/**/*.js\" rollup.config.js rollup.browser.config.js",
-    "check-format": "prettier \"src/**/*.js\" rollup.config.js rollup.browser.config.js",
-    "lint": "eslint \"src/**/*.js\" rollup.config.js rollup.browser.config.js"
-  },
-  "author": "",
-  "license": "Apache-2.0",
-  "devDependencies": {
-    "@babel/core": "^7.4.0",
-    "@babel/eslint-parser": "^7.15.8",
-    "@babel/preset-env": "^7.4.2",
-    "@rollup/plugin-commonjs": "^21.0.0",
-    "@rollup/plugin-json": "^4.1.0",
-    "@rollup/plugin-node-resolve": "^13.0.5",
-    "@rollup/plugin-replace": "^4.0.0",
-    "babel-jest": "^27.2.4",
-    "babel-polyfill": "^6.26.0",
-    "cross-fetch": "^4.0.0",
-    "eslint": "^8.0.1",
-    "jest": "^27.2.4",
-    "jest-in-case": "^1.0.2",
-    "prettier": "^2.3.1",
-    "regenerator-runtime": "^0.13.9",
-    "rollup": "^2.58.0"
-  },
-  "resolutions": {
-    "https-proxy-agent": "^3.0.0"
-  },
-  "jest": {
-    "setupFilesAfterEnv": [
-      "./setupTests.js"
-    ],
-    "testPathIgnorePatterns": [
-      "dist/",
-      "/node_modules/"
-    ]
-  }
+  "license": "Apache-2.0"
 }

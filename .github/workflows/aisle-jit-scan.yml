@@ -1,0 +1,35 @@
+name: Aisle JIT security scan
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aisle-jit-scan-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  aisle-scan:
+    name: Aisle security scan
+    runs-on: pb-2c-4g
+    timeout-minutes: 15
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: productboard/shared-workflows/.github/actions/jit-scan@main
+        with:
+          api_token: ${{ secrets.AISLE_API_TOKEN }}
+          api_url:   ${{ secrets.AISLE_API_URL }}
+          scan_types: sast,sca,licenses
+          fail_on_findings: false

@@ -27,7 +27,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: productboard/shared-workflows/.github/actions/jit-scan@main
+      - uses: productboard/shared-workflows/.github/actions/jit-scan@049662c75ef011f3165aef8e32d9c4446d409da0 # main
         with:
           api_token: ${{ secrets.AISLE_API_TOKEN }}
           api_url:   ${{ secrets.AISLE_API_URL }}

@@ -23,7 +23,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: productboard/shared-workflows/.github/actions/jit-scan@049662c75ef011f3165aef8e32d9c4446d409da0 # main
+      - uses: productboard/shared-workflows/.github/actions/jit-scan@6e034ce790a4d426755d32c111ca5d6ffbe0bd5f # main
         with:
           api_token: ${{ secrets.AISLE_API_TOKEN }}
           api_url: ${{ secrets.AISLE_API_URL }}
